@@ -5,26 +5,26 @@ use std::{
     u64,
 };
 
-use anyhow::{anyhow, bail, ensure, Result};
+use anyhow::{anyhow, bail, ensure, Context, Result};
 use roxmltree::Node;
 
 fn get<'a>(value: &'a HashMap<&'a str, Node<'a, 'a>>, name: &str) -> Result<&'a Node<'a, 'a>> {
     value
         .get(name)
-        .ok_or_else(|| anyhow!("field `{}` is missing", name))
+        .with_context(|| anyhow!("field `{}` is missing", name))
 }
 
 fn get_string(value: &HashMap<&str, Node<'_, '_>>, name: &str) -> Result<String> {
     get(value, name)?
         .text()
-        .ok_or_else(|| anyhow!("field `{}` has not content", name))
+        .with_context(|| anyhow!("field `{}` has not content", name))
         .map(ToOwned::to_owned)
 }
 
 fn get_bool(value: &HashMap<&str, Node<'_, '_>>, name: &str) -> Result<bool> {
     Ok(get(value, name)?
         .text()
-        .ok_or_else(|| anyhow!("field `{}` has not content", name))?
+        .with_context(|| anyhow!("field `{}` has not content", name))?
         == "true")
 }
 
@@ -33,11 +33,13 @@ where
     T: FromStr<Err = E>,
     E: Into<anyhow::Error>,
 {
-    get(value, name)?
+    let content = get(value, name)?
         .text()
-        .ok_or_else(|| anyhow!("field `{}` has not content", name))?
+        .with_context(|| anyhow!("field `{}` has not content", name))?;
+    content
         .parse()
         .map_err(Into::into)
+        .with_context(|| anyhow!("invalid content `{}` in `{}` field", content, name))
 }
 
 fn try_into<'a, T, E>(value: &'a HashMap<&str, Node<'_, '_>>, name: &str) -> Result<T>
@@ -105,7 +107,7 @@ where
             ensure!(name == tag, "tag name wasn't `{}` but `{}`", tag, name);
             let value = c
                 .text()
-                .ok_or_else(|| anyhow!("no content in <{}> tag", tag))?;
+                .with_context(|| anyhow!("no content in <{}> tag", tag))?;
 
             transform(value).map_err(Into::into)
         })
@@ -164,8 +166,8 @@ pub struct SaveGame {
     pub should_spawn_monsters: bool,
     pub has_applied_1_3_update_changes: bool,
     pub has_applied_1_4_update_changes: bool,
-    pub music_volume: u64,
-    pub sound_volume: u64,
+    pub music_volume: f64,
+    pub sound_volume: f64,
     pub crops_of_the_week: Vec<u64>,
     dis_of_the_day: (),
     pub highest_player_limit: u8,
@@ -183,9 +185,6 @@ pub struct SaveGame {
     cellar_assignments: (),
     pub last_applied_save_fix: u64,
     pub game_version: String,
-    tutorial_data: Vec<String>,
-    shop_locations_visited: Vec<String>,
-    pub show_tutorials: bool,
 }
 
 impl<'a> TryFrom<&HashMap<&'a str, Node<'a, 'a>>> for SaveGame {
@@ -242,13 +241,6 @@ impl<'a> TryFrom<&HashMap<&'a str, Node<'a, 'a>>> for SaveGame {
             cellar_assignments: (),
             last_applied_save_fix: parse(value, "lastAppliedSaveFix")?,
             game_version: get_string(value, "gameVersion")?,
-            tutorial_data: get_string_list_with_tag(value, "tutorialData", "tutorialType")?,
-            shop_locations_visited: get_string_list_with_tag(
-                value,
-                "shopLocationsVisited",
-                "TutorialShopLocation",
-            )?,
-            show_tutorials: get_bool(value, "showTutorials")?,
         })
     }
 }
