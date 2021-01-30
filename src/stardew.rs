@@ -1,5 +1,4 @@
 use std::{
-    collections::HashMap,
     convert::{TryFrom, TryInto},
     str::FromStr,
     u64,
@@ -8,27 +7,28 @@ use std::{
 use anyhow::{anyhow, bail, ensure, Context, Result};
 use roxmltree::Node;
 
-fn get<'a>(value: &'a HashMap<&'a str, Node<'a, 'a>>, name: &str) -> Result<&'a Node<'a, 'a>> {
+fn get<'a>(value: Node<'a, 'a>, name: &str) -> Result<Node<'a, 'a>> {
     value
-        .get(name)
+        .children()
+        .find(|c| c.is_element() && c.tag_name().name() == name)
         .with_context(|| anyhow!("field `{}` is missing", name))
 }
 
-fn get_string(value: &HashMap<&str, Node<'_, '_>>, name: &str) -> Result<String> {
+fn get_string(value: Node<'_, '_>, name: &str) -> Result<String> {
     get(value, name)?
         .text()
         .with_context(|| anyhow!("field `{}` has not content", name))
         .map(ToOwned::to_owned)
 }
 
-fn get_bool(value: &HashMap<&str, Node<'_, '_>>, name: &str) -> Result<bool> {
+fn get_bool(value: Node<'_, '_>, name: &str) -> Result<bool> {
     Ok(get(value, name)?
         .text()
         .with_context(|| anyhow!("field `{}` has not content", name))?
         == "true")
 }
 
-fn parse<T, E>(value: &HashMap<&str, Node<'_, '_>>, name: &str) -> Result<T>
+fn parse<T, E>(value: Node<'_, '_>, name: &str) -> Result<T>
 where
     T: FromStr<Err = E>,
     E: Into<anyhow::Error>,
@@ -42,27 +42,17 @@ where
         .with_context(|| anyhow!("invalid content `{}` in `{}` field", content, name))
 }
 
-fn try_into<'a, T, E>(value: &'a HashMap<&str, Node<'_, '_>>, name: &str) -> Result<T>
+fn try_into<'a, T, E>(value: Node<'a, 'a>, name: &str) -> Result<T>
 where
-    T: TryFrom<HashMap<&'a str, Node<'a, 'a>>, Error = E>,
+    T: TryFrom<Node<'a, 'a>, Error = E>,
     E: Into<anyhow::Error>,
 {
-    get(value, name)?
-        .children()
-        .filter(|c| c.is_element())
-        .map(|c| (c.tag_name().name(), c))
-        .collect::<HashMap<_, _>>()
-        .try_into()
-        .map_err(Into::into)
+    get(value, name)?.try_into().map_err(Into::into)
 }
 
-fn try_into_list<'a, T, E>(
-    value: &'a HashMap<&str, Node<'_, '_>>,
-    name: &str,
-    tag: &str,
-) -> Result<Vec<T>>
+fn try_into_list<'a, T, E>(value: Node<'a, 'a>, name: &str, tag: &str) -> Result<Vec<T>>
 where
-    T: TryFrom<(Option<&'a str>, HashMap<&'a str, Node<'a, 'a>>), Error = E>,
+    T: TryFrom<(Option<&'a str>, Node<'a, 'a>), Error = E>,
     E: Into<anyhow::Error>,
 {
     get(value, name)?
@@ -79,23 +69,13 @@ where
             ensure!(name == tag, "tag name wasn't `{}` but `{}`", tag, name);
 
             let ty = c.attribute(("http://www.w3.org/2001/XMLSchema-instance", "type"));
-            let map = c
-                .children()
-                .filter(|c| c.is_element())
-                .map(|c| (c.tag_name().name(), c))
-                .collect::<HashMap<_, _>>();
 
-            (ty, map).try_into().map_err(Into::into)
+            (ty, c).try_into().map_err(Into::into)
         })
         .collect()
 }
 
-fn get_list<T, F>(
-    value: &HashMap<&str, Node<'_, '_>>,
-    name: &str,
-    tag: &str,
-    transform: F,
-) -> Result<Vec<T>>
+fn get_list<T, F>(value: Node<'_, '_>, name: &str, tag: &str, transform: F) -> Result<Vec<T>>
 where
     F: Fn(&str) -> Result<T>,
 {
@@ -114,21 +94,17 @@ where
         .collect()
 }
 
-fn get_int_list(value: &HashMap<&str, Node<'_, '_>>, name: &str) -> Result<Vec<u64>> {
+fn get_int_list(value: Node<'_, '_>, name: &str) -> Result<Vec<u64>> {
     get_list(value, name, "int", |value| {
         value.parse().map_err(Into::into)
     })
 }
 
-fn get_string_list_with_tag(
-    value: &HashMap<&str, Node<'_, '_>>,
-    name: &str,
-    tag: &str,
-) -> Result<Vec<String>> {
+fn get_string_list_with_tag(value: Node<'_, '_>, name: &str, tag: &str) -> Result<Vec<String>> {
     get_list(value, name, tag, |value| Ok(value.to_owned()))
 }
 
-fn get_string_list(value: &HashMap<&str, Node<'_, '_>>, name: &str) -> Result<Vec<String>> {
+fn get_string_list(value: Node<'_, '_>, name: &str) -> Result<Vec<String>> {
     get_string_list_with_tag(value, name, "string")
 }
 
@@ -187,12 +163,12 @@ pub struct SaveGame {
     pub game_version: String,
 }
 
-impl<'a> TryFrom<&HashMap<&'a str, Node<'a, 'a>>> for SaveGame {
+impl<'a> TryFrom<Node<'a, 'a>> for SaveGame {
     type Error = anyhow::Error;
 
-    fn try_from(value: &HashMap<&'a str, Node<'a, 'a>>) -> Result<Self, Self::Error> {
+    fn try_from(value: Node<'a, 'a>) -> Result<Self, Self::Error> {
         Ok(Self {
-            player: try_into(&value, "player")?,
+            player: try_into(value, "player")?,
             locations: (),
             current_season: parse(value, "currentSeason")?,
             sam_band_name: get_string(value, "samBandName")?,
@@ -441,169 +417,169 @@ pub struct Player {
     pub money: u64,
 }
 
-impl<'a> TryFrom<HashMap<&'a str, Node<'a, 'a>>> for Player {
+impl<'a> TryFrom<Node<'a, 'a>> for Player {
     type Error = anyhow::Error;
 
-    fn try_from(value: HashMap<&'a str, Node<'a, 'a>>) -> Result<Self, Self::Error> {
+    fn try_from(value: Node<'a, 'a>) -> Result<Self, Self::Error> {
         Ok(Self {
-            name: get_string(&value, "name")?,
-            is_emoting: get_bool(&value, "isEmoting")?,
-            is_charging: get_bool(&value, "isCharging")?,
-            is_glowing: get_bool(&value, "isGlowing")?,
-            colored_border: get_bool(&value, "coloredBorder")?,
-            flip: get_bool(&value, "flip")?,
-            draw_on_top: get_bool(&value, "drawOnTop")?,
-            face_toward_farmer: get_bool(&value, "faceTowardFarmer")?,
-            ignore_movement_animation: get_bool(&value, "ignoreMovementAnimation")?,
-            face_away_from_farmer: get_bool(&value, "faceAwayFromFarmer")?,
-            scale: value["scale"]
+            name: get_string(value, "name")?,
+            is_emoting: get_bool(value, "isEmoting")?,
+            is_charging: get_bool(value, "isCharging")?,
+            is_glowing: get_bool(value, "isGlowing")?,
+            colored_border: get_bool(value, "coloredBorder")?,
+            flip: get_bool(value, "flip")?,
+            draw_on_top: get_bool(value, "drawOnTop")?,
+            face_toward_farmer: get_bool(value, "faceTowardFarmer")?,
+            ignore_movement_animation: get_bool(value, "ignoreMovementAnimation")?,
+            face_away_from_farmer: get_bool(value, "faceAwayFromFarmer")?,
+            scale: get(value, "scale")?
                 .first_element_child()
                 .unwrap()
                 .text()
                 .unwrap()
                 .parse()?,
-            time_before_ai_movement_again: parse(&value, "timeBeforeAIMovementAgain")?,
-            glowing_transparency: parse(&value, "glowingTransparency")?,
-            glow_rate: parse(&value, "glowRate")?,
-            will_destroy_objects_underfoot: get_bool(&value, "willDestroyObjectsUnderfoot")?,
-            position: try_into(&value, "Position")?,
-            speed: parse(&value, "Speed")?,
-            facing_direction: parse(&value, "FacingDirection")?,
-            is_emoting2: get_bool(&value, "IsEmoting")?,
-            current_emote: parse(&value, "CurrentEmote")?,
-            scale2: parse(&value, "Scale")?,
-            professions: get_int_list(&value, "professions")?,
+            time_before_ai_movement_again: parse(value, "timeBeforeAIMovementAgain")?,
+            glowing_transparency: parse(value, "glowingTransparency")?,
+            glow_rate: parse(value, "glowRate")?,
+            will_destroy_objects_underfoot: get_bool(value, "willDestroyObjectsUnderfoot")?,
+            position: try_into(value, "Position")?,
+            speed: parse(value, "Speed")?,
+            facing_direction: parse(value, "FacingDirection")?,
+            is_emoting2: get_bool(value, "IsEmoting")?,
+            current_emote: parse(value, "CurrentEmote")?,
+            scale2: parse(value, "Scale")?,
+            professions: get_int_list(value, "professions")?,
             new_levels: (),
-            experience_points: get_int_list(&value, "experiencePoints")?,
-            items: try_into_list(&value, "items", "Item")?,
-            dialogue_questions_answered: get_int_list(&value, "dialogueQuestionsAnswered")?,
+            experience_points: get_int_list(value, "experiencePoints")?,
+            items: try_into_list(value, "items", "Item")?,
+            dialogue_questions_answered: get_int_list(value, "dialogueQuestionsAnswered")?,
             furniture_owned: (),
-            cooking_recipes: try_into_list(&value, "cookingRecipes", "item")?,
+            cooking_recipes: try_into_list(value, "cookingRecipes", "item")?,
             active_dialogue_events: (),
-            events_seen: get_int_list(&value, "eventsSeen")?,
+            events_seen: get_int_list(value, "eventsSeen")?,
             secret_notes_seen: (),
-            songs_heard: get_string_list(&value, "songsHeard")?,
-            achievements: get_int_list(&value, "achievements")?,
-            special_items: get_int_list(&value, "specialItems")?,
-            special_big_craftables: get_int_list(&value, "specialBigCraftables")?,
-            mail_received: get_string_list(&value, "mailReceived")?,
+            songs_heard: get_string_list(value, "songsHeard")?,
+            achievements: get_int_list(value, "achievements")?,
+            special_items: get_int_list(value, "specialItems")?,
+            special_big_craftables: get_int_list(value, "specialBigCraftables")?,
+            mail_received: get_string_list(value, "mailReceived")?,
             mail_for_tomorrow: (),
-            mailbox: get_string_list(&value, "mailbox")?,
-            time_went_to_bed: value["timeWentToBed"]
+            mailbox: get_string_list(value, "mailbox")?,
+            time_went_to_bed: get(value, "timeWentToBed")?
                 .first_element_child()
                 .unwrap()
                 .text()
                 .unwrap()
                 .parse()?,
             blueprints: (),
-            farm_name: get_string(&value, "farmName")?,
-            favorite_thing: get_string(&value, "favoriteThing")?,
-            slot_can_host: get_bool(&value, "slotCanHost")?,
+            farm_name: get_string(value, "farmName")?,
+            favorite_thing: get_string(value, "favoriteThing")?,
+            slot_can_host: get_bool(value, "slotCanHost")?,
             user_id: (),
-            cat_person: get_bool(&value, "catPerson")?,
-            which_pet_breed: parse(&value, "whichPetBreed")?,
-            accepted_daily_quest: get_bool(&value, "acceptedDailyQuest")?,
-            most_recent_bed: try_into(&value, "mostRecentBed")?,
+            cat_person: get_bool(value, "catPerson")?,
+            which_pet_breed: parse(value, "whichPetBreed")?,
+            accepted_daily_quest: get_bool(value, "acceptedDailyQuest")?,
+            most_recent_bed: try_into(value, "mostRecentBed")?,
             performed_emotes: (),
-            shirt: parse(&value, "shirt")?,
-            hair: parse(&value, "hair")?,
-            skin: parse(&value, "skin")?,
-            shoes: parse(&value, "shoes")?,
-            accessory: parse(&value, "accessory")?,
-            facial_hair: parse(&value, "facialHair")?,
-            pants: parse(&value, "pants")?,
-            hairstyle_color: try_into(&value, "hairstyleColor")?,
-            pants_color: try_into(&value, "pantsColor")?,
-            new_eye_color: try_into(&value, "newEyeColor")?,
-            shirt_item: try_into(&value, "shirtItem")?,
-            pants_item: try_into(&value, "pantsItem")?,
-            divorce_tonight: get_bool(&value, "divorceTonight")?,
-            change_wallet_type_tonight: get_bool(&value, "changeWalletTypeTonight")?,
-            wood_pieces: parse(&value, "woodPieces")?,
-            stone_pieces: parse(&value, "stonePieces")?,
-            copper_pieces: parse(&value, "copperPieces")?,
-            iron_pieces: parse(&value, "ironPieces")?,
-            coal_pieces: parse(&value, "coalPieces")?,
-            gold_pieces: parse(&value, "goldPieces")?,
-            iridium_pieces: parse(&value, "iridiumPieces")?,
-            quartz_pieces: parse(&value, "quartzPieces")?,
-            game_version: get_string(&value, "gameVersion")?,
-            cave_choice: parse(&value, "caveChoice")?,
-            feed: parse(&value, "feed")?,
-            farming_level: parse(&value, "farmingLevel")?,
-            mining_level: parse(&value, "miningLevel")?,
-            combat_level: parse(&value, "combatLevel")?,
-            foraging_level: parse(&value, "foragingLevel")?,
-            fishing_level: parse(&value, "fishingLevel")?,
-            luck_level: parse(&value, "luckLevel")?,
-            new_skill_points_to_spend: parse(&value, "newSkillPointsToSpend")?,
-            added_farming_level: parse(&value, "addedFarmingLevel")?,
-            added_mining_level: parse(&value, "addedMiningLevel")?,
-            added_combat_level: parse(&value, "addedCombatLevel")?,
-            added_foraging_level: parse(&value, "addedForagingLevel")?,
-            added_fishing_level: parse(&value, "addedFishingLevel")?,
-            added_luck_level: parse(&value, "addedLuckLevel")?,
-            max_stamina: parse(&value, "maxStamina")?,
-            max_items: parse(&value, "maxItems")?,
-            last_seen_movie_week: parse(&value, "lastSeenMovieWeek")?,
-            resilience: parse(&value, "resilience")?,
-            attack: parse(&value, "attack")?,
-            immunity: parse(&value, "immunity")?,
-            attack_increase_modifier: parse(&value, "attackIncreaseModifier")?,
-            knockback_modifier: parse(&value, "knockbackModifier")?,
-            weapon_speed_modifier: parse(&value, "weaponSpeedModifier")?,
-            crit_chance_modifier: parse(&value, "critChanceModifier")?,
-            crit_power_modifier: parse(&value, "critPowerModifier")?,
-            weapon_precision_modifier: parse(&value, "weaponPrecisionModifier")?,
-            club_coins: parse(&value, "clubCoins")?,
-            trash_can_level: parse(&value, "trashCanLevel")?,
-            days_left_for_tool_upgrade: parse(&value, "daysLeftForToolUpgrade")?,
-            house_upgrade_level: parse(&value, "houseUpgradeLevel")?,
-            days_until_house_upgrade: parse(&value, "daysUntilHouseUpgrade")?,
-            coop_upgrade_level: parse(&value, "coopUpgradeLevel")?,
-            barn_upgrade_level: parse(&value, "barnUpgradeLevel")?,
-            has_greenhouse: get_bool(&value, "hasGreenhouse")?,
-            has_unlocked_skull_door: get_bool(&value, "hasUnlockedSkullDoor")?,
-            has_dark_talisman: get_bool(&value, "hasDarkTalisman")?,
-            has_magic_ink: get_bool(&value, "hasMagicInk")?,
-            show_chest_color_picker: get_bool(&value, "showChestColorPicker")?,
-            has_magnifying_glass: get_bool(&value, "hasMagnifyingGlass")?,
-            has_watering_can_enchantment: get_bool(&value, "hasWateringCanEnchantment")?,
-            magnetic_radius: parse(&value, "magneticRadius")?,
-            temporary_invincibility_timer: parse(&value, "temporaryInvincibilityTimer")?,
-            health: parse(&value, "health")?,
-            max_health: parse(&value, "maxHealth")?,
-            difficulty_modifier: parse(&value, "difficultyModifier")?,
-            is_male: get_bool(&value, "isMale")?,
-            has_bus_ticket: get_bool(&value, "hasBusTicket")?,
-            stardew_hero: get_bool(&value, "stardewHero")?,
-            has_club_card: get_bool(&value, "hasClubCard")?,
-            has_special_charm: get_bool(&value, "hasSpecialCharm")?,
-            day_of_month_for_save_game: parse(&value, "dayOfMonthForSaveGame")?,
-            season_for_save_game: parse(&value, "seasonForSaveGame")?,
-            year_for_safe_game: parse(&value, "yearForSaveGame")?,
-            overalls_color: parse(&value, "overallsColor")?,
-            shirt_color: parse(&value, "shirtColor")?,
-            skin_color: parse(&value, "skinColor")?,
-            hair_color: parse(&value, "hairColor")?,
-            eye_color: parse(&value, "eyeColor")?,
-            save_time: parse(&value, "saveTime")?,
-            is_customized: get_bool(&value, "isCustomized")?,
-            home_location: get_string(&value, "homeLocation")?,
-            days_married: parse(&value, "daysMarried")?,
-            movement_multiplier: parse(&value, "movementMultiplier")?,
-            theater_build_date: parse(&value, "theaterBuildDate")?,
-            deepest_mine_level: parse(&value, "deepestMineLevel")?,
-            stamina: parse(&value, "stamina")?,
-            total_money_earned: parse(&value, "totalMoneyEarned")?,
-            milliseconds_played: parse(&value, "millisecondsPlayed")?,
-            has_rusty_key: get_bool(&value, "hasRustyKey")?,
-            has_skull_key: get_bool(&value, "hasSkullKey")?,
-            can_understand_dwarves: get_bool(&value, "canUnderstandDwarves")?,
-            use_separate_wallets: get_bool(&value, "useSeparateWallets")?,
-            times_reached_mine_bottom: parse(&value, "timesReachedMineBottom")?,
-            unique_multiplayer_id: get_string(&value, "UniqueMultiplayerID")?,
-            money: parse(&value, "money")?,
+            shirt: parse(value, "shirt")?,
+            hair: parse(value, "hair")?,
+            skin: parse(value, "skin")?,
+            shoes: parse(value, "shoes")?,
+            accessory: parse(value, "accessory")?,
+            facial_hair: parse(value, "facialHair")?,
+            pants: parse(value, "pants")?,
+            hairstyle_color: try_into(value, "hairstyleColor")?,
+            pants_color: try_into(value, "pantsColor")?,
+            new_eye_color: try_into(value, "newEyeColor")?,
+            shirt_item: try_into(value, "shirtItem")?,
+            pants_item: try_into(value, "pantsItem")?,
+            divorce_tonight: get_bool(value, "divorceTonight")?,
+            change_wallet_type_tonight: get_bool(value, "changeWalletTypeTonight")?,
+            wood_pieces: parse(value, "woodPieces")?,
+            stone_pieces: parse(value, "stonePieces")?,
+            copper_pieces: parse(value, "copperPieces")?,
+            iron_pieces: parse(value, "ironPieces")?,
+            coal_pieces: parse(value, "coalPieces")?,
+            gold_pieces: parse(value, "goldPieces")?,
+            iridium_pieces: parse(value, "iridiumPieces")?,
+            quartz_pieces: parse(value, "quartzPieces")?,
+            game_version: get_string(value, "gameVersion")?,
+            cave_choice: parse(value, "caveChoice")?,
+            feed: parse(value, "feed")?,
+            farming_level: parse(value, "farmingLevel")?,
+            mining_level: parse(value, "miningLevel")?,
+            combat_level: parse(value, "combatLevel")?,
+            foraging_level: parse(value, "foragingLevel")?,
+            fishing_level: parse(value, "fishingLevel")?,
+            luck_level: parse(value, "luckLevel")?,
+            new_skill_points_to_spend: parse(value, "newSkillPointsToSpend")?,
+            added_farming_level: parse(value, "addedFarmingLevel")?,
+            added_mining_level: parse(value, "addedMiningLevel")?,
+            added_combat_level: parse(value, "addedCombatLevel")?,
+            added_foraging_level: parse(value, "addedForagingLevel")?,
+            added_fishing_level: parse(value, "addedFishingLevel")?,
+            added_luck_level: parse(value, "addedLuckLevel")?,
+            max_stamina: parse(value, "maxStamina")?,
+            max_items: parse(value, "maxItems")?,
+            last_seen_movie_week: parse(value, "lastSeenMovieWeek")?,
+            resilience: parse(value, "resilience")?,
+            attack: parse(value, "attack")?,
+            immunity: parse(value, "immunity")?,
+            attack_increase_modifier: parse(value, "attackIncreaseModifier")?,
+            knockback_modifier: parse(value, "knockbackModifier")?,
+            weapon_speed_modifier: parse(value, "weaponSpeedModifier")?,
+            crit_chance_modifier: parse(value, "critChanceModifier")?,
+            crit_power_modifier: parse(value, "critPowerModifier")?,
+            weapon_precision_modifier: parse(value, "weaponPrecisionModifier")?,
+            club_coins: parse(value, "clubCoins")?,
+            trash_can_level: parse(value, "trashCanLevel")?,
+            days_left_for_tool_upgrade: parse(value, "daysLeftForToolUpgrade")?,
+            house_upgrade_level: parse(value, "houseUpgradeLevel")?,
+            days_until_house_upgrade: parse(value, "daysUntilHouseUpgrade")?,
+            coop_upgrade_level: parse(value, "coopUpgradeLevel")?,
+            barn_upgrade_level: parse(value, "barnUpgradeLevel")?,
+            has_greenhouse: get_bool(value, "hasGreenhouse")?,
+            has_unlocked_skull_door: get_bool(value, "hasUnlockedSkullDoor")?,
+            has_dark_talisman: get_bool(value, "hasDarkTalisman")?,
+            has_magic_ink: get_bool(value, "hasMagicInk")?,
+            show_chest_color_picker: get_bool(value, "showChestColorPicker")?,
+            has_magnifying_glass: get_bool(value, "hasMagnifyingGlass")?,
+            has_watering_can_enchantment: get_bool(value, "hasWateringCanEnchantment")?,
+            magnetic_radius: parse(value, "magneticRadius")?,
+            temporary_invincibility_timer: parse(value, "temporaryInvincibilityTimer")?,
+            health: parse(value, "health")?,
+            max_health: parse(value, "maxHealth")?,
+            difficulty_modifier: parse(value, "difficultyModifier")?,
+            is_male: get_bool(value, "isMale")?,
+            has_bus_ticket: get_bool(value, "hasBusTicket")?,
+            stardew_hero: get_bool(value, "stardewHero")?,
+            has_club_card: get_bool(value, "hasClubCard")?,
+            has_special_charm: get_bool(value, "hasSpecialCharm")?,
+            day_of_month_for_save_game: parse(value, "dayOfMonthForSaveGame")?,
+            season_for_save_game: parse(value, "seasonForSaveGame")?,
+            year_for_safe_game: parse(value, "yearForSaveGame")?,
+            overalls_color: parse(value, "overallsColor")?,
+            shirt_color: parse(value, "shirtColor")?,
+            skin_color: parse(value, "skinColor")?,
+            hair_color: parse(value, "hairColor")?,
+            eye_color: parse(value, "eyeColor")?,
+            save_time: parse(value, "saveTime")?,
+            is_customized: get_bool(value, "isCustomized")?,
+            home_location: get_string(value, "homeLocation")?,
+            days_married: parse(value, "daysMarried")?,
+            movement_multiplier: parse(value, "movementMultiplier")?,
+            theater_build_date: parse(value, "theaterBuildDate")?,
+            deepest_mine_level: parse(value, "deepestMineLevel")?,
+            stamina: parse(value, "stamina")?,
+            total_money_earned: parse(value, "totalMoneyEarned")?,
+            milliseconds_played: parse(value, "millisecondsPlayed")?,
+            has_rusty_key: get_bool(value, "hasRustyKey")?,
+            has_skull_key: get_bool(value, "hasSkullKey")?,
+            can_understand_dwarves: get_bool(value, "canUnderstandDwarves")?,
+            use_separate_wallets: get_bool(value, "useSeparateWallets")?,
+            times_reached_mine_bottom: parse(value, "timesReachedMineBottom")?,
+            unique_multiplayer_id: get_string(value, "UniqueMultiplayerID")?,
+            money: parse(value, "money")?,
         })
     }
 }
@@ -614,13 +590,13 @@ pub struct Position {
     pub y: f64,
 }
 
-impl<'a> TryFrom<HashMap<&'a str, Node<'a, 'a>>> for Position {
+impl<'a> TryFrom<Node<'a, 'a>> for Position {
     type Error = anyhow::Error;
 
-    fn try_from(value: HashMap<&'a str, Node<'a, 'a>>) -> Result<Self, Self::Error> {
+    fn try_from(value: Node<'a, 'a>) -> Result<Self, Self::Error> {
         Ok(Self {
-            x: parse(&value, "X")?,
-            y: parse(&value, "Y")?,
+            x: parse(value, "X")?,
+            y: parse(value, "Y")?,
         })
     }
 }
@@ -678,20 +654,18 @@ pub struct Pair {
     value: i64,
 }
 
-impl<'a> TryFrom<(Option<&str>, HashMap<&'a str, Node<'a, 'a>>)> for Pair {
+impl<'a> TryFrom<(Option<&str>, Node<'a, 'a>)> for Pair {
     type Error = anyhow::Error;
 
-    fn try_from(
-        (_, value): (Option<&str>, HashMap<&'a str, Node<'a, 'a>>),
-    ) -> Result<Self, Self::Error> {
+    fn try_from((_, value): (Option<&str>, Node<'a, 'a>)) -> Result<Self, Self::Error> {
         Ok(Self {
-            key: get(&value, "key")?
+            key: get(value, "key")?
                 .first_element_child()
                 .with_context(|| anyhow!("key tag is missing"))?
                 .text()
                 .with_context(|| anyhow!("key content is empty"))?
                 .to_owned(),
-            value: get(&value, "value")?
+            value: get(value, "value")?
                 .first_element_child()
                 .with_context(|| anyhow!("value tag is missing"))?
                 .text()
@@ -710,16 +684,16 @@ pub struct Color {
     pub packed_value: u32,
 }
 
-impl<'a> TryFrom<HashMap<&'a str, Node<'a, 'a>>> for Color {
+impl<'a> TryFrom<Node<'a, 'a>> for Color {
     type Error = anyhow::Error;
 
-    fn try_from(value: HashMap<&'a str, Node<'a, 'a>>) -> Result<Self, Self::Error> {
+    fn try_from(value: Node<'a, 'a>) -> Result<Self, Self::Error> {
         Ok(Self {
-            r: parse(&value, "R")?,
-            g: parse(&value, "G")?,
-            b: parse(&value, "B")?,
-            a: parse(&value, "A")?,
-            packed_value: parse(&value, "PackedValue")?,
+            r: parse(value, "R")?,
+            g: parse(value, "G")?,
+            b: parse(value, "B")?,
+            a: parse(value, "A")?,
+            packed_value: parse(value, "PackedValue")?,
         })
     }
 }
@@ -747,30 +721,30 @@ pub struct ClothingItem {
     pub price2: u64,
 }
 
-impl<'a> TryFrom<HashMap<&'a str, Node<'a, 'a>>> for ClothingItem {
+impl<'a> TryFrom<Node<'a, 'a>> for ClothingItem {
     type Error = anyhow::Error;
 
-    fn try_from(value: HashMap<&'a str, Node<'a, 'a>>) -> Result<Self, Self::Error> {
+    fn try_from(value: Node<'a, 'a>) -> Result<Self, Self::Error> {
         Ok(Self {
-            is_lost_item: get_bool(&value, "isLostItem")?,
-            category: parse(&value, "category")?,
-            has_been_in_inventory: get_bool(&value, "hasBeenInInventory")?,
-            name: get_string(&value, "name")?,
-            parent_sheet_index: parse(&value, "parentSheetIndex")?,
-            special_item: get_bool(&value, "specialItem")?,
-            special_variable: parse(&value, "SpecialVariable")?,
-            display_name: get_string(&value, "DisplayName")?,
-            name2: get_string(&value, "Name")?,
-            stack: parse(&value, "Stack")?,
-            price: parse(&value, "price")?,
-            index_in_tile_sheet: parse(&value, "indexInTileSheet")?,
-            index_in_tile_sheet_female: parse(&value, "indexInTileSheetFemale")?,
-            clothes_type: parse(&value, "clothesType")?,
-            dyeable: get_bool(&value, "dyeable")?,
-            clothes_color: try_into(&value, "clothesColor")?,
+            is_lost_item: get_bool(value, "isLostItem")?,
+            category: parse(value, "category")?,
+            has_been_in_inventory: get_bool(value, "hasBeenInInventory")?,
+            name: get_string(value, "name")?,
+            parent_sheet_index: parse(value, "parentSheetIndex")?,
+            special_item: get_bool(value, "specialItem")?,
+            special_variable: parse(value, "SpecialVariable")?,
+            display_name: get_string(value, "DisplayName")?,
+            name2: get_string(value, "Name")?,
+            stack: parse(value, "Stack")?,
+            price: parse(value, "price")?,
+            index_in_tile_sheet: parse(value, "indexInTileSheet")?,
+            index_in_tile_sheet_female: parse(value, "indexInTileSheetFemale")?,
+            clothes_type: parse(value, "clothesType")?,
+            dyeable: get_bool(value, "dyeable")?,
+            clothes_color: try_into(value, "clothesColor")?,
             other_data: (),
-            is_prismatic: get_bool(&value, "isPrismatic")?,
-            price2: parse(&value, "Price")?,
+            is_prismatic: get_bool(value, "isPrismatic")?,
+            price2: parse(value, "Price")?,
         })
     }
 }
@@ -788,22 +762,20 @@ pub struct Item {
     pub stack: u64,
 }
 
-impl TryFrom<(Option<&str>, HashMap<&str, Node<'_, '_>>)> for Item {
+impl TryFrom<(Option<&str>, Node<'_, '_>)> for Item {
     type Error = anyhow::Error;
 
-    fn try_from(
-        (_ty, value): (Option<&str>, HashMap<&str, Node<'_, '_>>),
-    ) -> Result<Self, Self::Error> {
+    fn try_from((_ty, value): (Option<&str>, Node<'_, '_>)) -> Result<Self, Self::Error> {
         Ok(Self {
-            is_lost_item: get_bool(&value, "isLostItem")?,
-            category: parse(&value, "category")?,
-            has_been_in_inventory: get_bool(&value, "hasBeenInInventory")?,
-            name: get_string(&value, "name")?,
-            special_item: get_bool(&value, "specialItem")?,
-            special_variable: parse(&value, "SpecialVariable")?,
-            display_name: get_string(&value, "DisplayName")?,
-            name2: get_string(&value, "Name")?,
-            stack: parse(&value, "Stack")?,
+            is_lost_item: get_bool(value, "isLostItem")?,
+            category: parse(value, "category")?,
+            has_been_in_inventory: get_bool(value, "hasBeenInInventory")?,
+            name: get_string(value, "name")?,
+            special_item: get_bool(value, "specialItem")?,
+            special_variable: parse(value, "SpecialVariable")?,
+            display_name: get_string(value, "DisplayName")?,
+            name2: get_string(value, "Name")?,
+            stack: parse(value, "Stack")?,
         })
     }
 }
@@ -811,11 +783,5 @@ impl TryFrom<(Option<&str>, HashMap<&str, Node<'_, '_>>)> for Item {
 pub fn load(file: &str) -> Result<SaveGame> {
     let doc = roxmltree::Document::parse(file)?;
 
-    SaveGame::try_from(
-        &doc.root_element()
-            .children()
-            .filter(|c| c.is_element())
-            .map(|c| (c.tag_name().name(), c))
-            .collect(),
-    )
+    SaveGame::try_from(doc.root_element())
 }
