@@ -5,7 +5,7 @@ use std::{
     u64,
 };
 
-use anyhow::{anyhow, ensure, Result};
+use anyhow::{anyhow, bail, ensure, Result};
 use roxmltree::Node;
 
 fn get<'a>(value: &'a HashMap<&'a str, Node<'a, 'a>>, name: &str) -> Result<&'a Node<'a, 'a>> {
@@ -130,12 +130,12 @@ fn get_string_list(value: &HashMap<&str, Node<'_, '_>>, name: &str) -> Result<Ve
     get_string_list_with_tag(value, name, "string")
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct SaveGame {
     pub player: Player,
     // TODO: implement
     locations: (),
-    pub current_season: String,
+    pub current_season: Season,
     pub sam_band_name: String,
     pub elliott_book_name: String,
     // TODO: implement
@@ -195,7 +195,7 @@ impl<'a> TryFrom<&HashMap<&'a str, Node<'a, 'a>>> for SaveGame {
         Ok(Self {
             player: try_into(&value, "player")?,
             locations: (),
-            current_season: get_string(value, "currentSeason")?,
+            current_season: parse(value, "currentSeason")?,
             sam_band_name: get_string(value, "samBandName")?,
             elliott_book_name: get_string(value, "elliottBookName")?,
             broadcasted_mail: (),
@@ -253,7 +253,29 @@ impl<'a> TryFrom<&HashMap<&'a str, Node<'a, 'a>>> for SaveGame {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
+pub enum Season {
+    Spring,
+    Summer,
+    Autumn,
+    Winter,
+}
+
+impl FromStr for Season {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(match s {
+            "spring" => Self::Spring,
+            "summer" => Self::Summer,
+            "autumn" => Self::Autumn,
+            "winter" => Self::Winter,
+            _ => bail!("unknown season `{}`", s),
+        })
+    }
+}
+
+#[derive(Debug)]
 pub struct Player {
     pub name: String,
     pub is_emoting: bool,
@@ -414,7 +436,6 @@ pub struct Player {
     pub home_location: String,
     pub days_married: u64,
     pub movement_multiplier: f64,
-    pub is_being_sick: bool,
     pub theater_build_date: i64,
     pub deepest_mine_level: u8,
     pub stamina: u32,
@@ -579,7 +600,6 @@ impl<'a> TryFrom<HashMap<&'a str, Node<'a, 'a>>> for Player {
             home_location: get_string(&value, "homeLocation")?,
             days_married: parse(&value, "daysMarried")?,
             movement_multiplier: parse(&value, "movementMultiplier")?,
-            is_being_sick: get_bool(&value, "isBeingSick")?,
             theater_build_date: parse(&value, "theaterBuildDate")?,
             deepest_mine_level: parse(&value, "deepestMineLevel")?,
             stamina: parse(&value, "stamina")?,
@@ -613,12 +633,12 @@ impl<'a> TryFrom<HashMap<&'a str, Node<'a, 'a>>> for Position {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct QuestLog {
     quest: Vec<Quest>,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct Quest {
     current_objective: String,
     quest_description: String,
@@ -683,7 +703,7 @@ impl<'a> TryFrom<HashMap<&'a str, Node<'a, 'a>>> for Color {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct ClothingItem {
     pub is_lost_item: bool,
     pub category: i64,
@@ -734,7 +754,7 @@ impl<'a> TryFrom<HashMap<&'a str, Node<'a, 'a>>> for ClothingItem {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct Item {
     pub is_lost_item: bool,
     pub category: i64,
