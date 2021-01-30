@@ -298,8 +298,7 @@ pub struct Player {
     pub items: Vec<Item>,
     pub dialogue_questions_answered: Vec<u64>,
     furniture_owned: (), // TODO: Don't know the type yet
-    // TODO: implement cooking recipe parsing
-    // cooking_recipes: Vec<(String, u64)>,
+    cooking_recipes: Vec<Pair>,
     // TODO: implement crafting recipe parsing
     // crafting_recipes: Vec<(String, u64)>,
     active_dialogue_events: (), // TODO: Don't know the type yet
@@ -479,6 +478,7 @@ impl<'a> TryFrom<HashMap<&'a str, Node<'a, 'a>>> for Player {
             items: try_into_list(&value, "items", "Item")?,
             dialogue_questions_answered: get_int_list(&value, "dialogueQuestionsAnswered")?,
             furniture_owned: (),
+            cooking_recipes: try_into_list(&value, "cookingRecipes", "item")?,
             active_dialogue_events: (),
             events_seen: get_int_list(&value, "eventsSeen")?,
             secret_notes_seen: (),
@@ -670,6 +670,35 @@ enum QuestType {
     // tile_y: u64,
     // item_found: bool,
     },
+}
+
+#[derive(Debug)]
+pub struct Pair {
+    key: String,
+    value: i64,
+}
+
+impl<'a> TryFrom<(Option<&str>, HashMap<&'a str, Node<'a, 'a>>)> for Pair {
+    type Error = anyhow::Error;
+
+    fn try_from(
+        (_, value): (Option<&str>, HashMap<&'a str, Node<'a, 'a>>),
+    ) -> Result<Self, Self::Error> {
+        Ok(Self {
+            key: get(&value, "key")?
+                .first_element_child()
+                .with_context(|| anyhow!("key tag is missing"))?
+                .text()
+                .with_context(|| anyhow!("key content is empty"))?
+                .to_owned(),
+            value: get(&value, "value")?
+                .first_element_child()
+                .with_context(|| anyhow!("value tag is missing"))?
+                .text()
+                .with_context(|| anyhow!("value content is empty"))?
+                .parse()?,
+        })
+    }
 }
 
 #[derive(Debug, Default)]
