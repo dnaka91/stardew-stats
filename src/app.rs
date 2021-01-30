@@ -81,7 +81,7 @@ impl Component for App {
                             />
                             <span class="file-cta">
                                 <span class="file-label">
-                                    { "Choose a file to upload" }
+                                    { "Choose a file to scan" }
                                 </span>
                             </span>
                         </label>
