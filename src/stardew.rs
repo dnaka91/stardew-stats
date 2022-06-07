@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use std::{
     convert::{TryFrom, TryInto},
     str::FromStr,

@@ -1,49 +1,43 @@
-use std::str;
-
-use yew::{
-    prelude::*,
-    services::{
-        reader::{File, FileData, ReaderTask},
-        ReaderService,
-    },
-};
+use gloo_file::{callbacks::FileReader, File, FileList};
+use wasm_bindgen::JsCast;
+use web_sys::HtmlInputElement;
+use yew::prelude::*;
 
 use crate::stardew;
 
 pub struct App {
-    link: ComponentLink<Self>,
-    upload_task: Option<ReaderTask>,
+    upload_task: Option<FileReader>,
     content: Option<String>,
 }
 
 pub enum Msg {
     File(File),
-    Loaded(FileData),
+    Loaded(String),
 }
 
 impl Component for App {
     type Message = Msg;
     type Properties = ();
 
-    fn create(_props: Self::Properties, link: ComponentLink<Self>) -> Self {
+    fn create(_ctx: &Context<Self>) -> Self {
         Self {
-            link,
             upload_task: None,
             content: None,
         }
     }
 
-    fn update(&mut self, msg: Self::Message) -> ShouldRender {
+    fn update(&mut self, ctx: &Context<Self>, msg: Self::Message) -> bool {
         match msg {
             Msg::File(file) => {
-                let callback = self.link.callback(Msg::Loaded);
-                let task = ReaderService::new().read_file(file, callback).unwrap();
+                let callback = ctx.link().callback(Msg::Loaded);
+                let task = gloo_file::callbacks::read_as_text(&file, move |res| {
+                    callback.emit(res.unwrap())
+                });
                 self.upload_task = Some(task);
                 true
             }
             Msg::Loaded(data) => {
-                let content = str::from_utf8(&data.content).unwrap();
-                let save_game = stardew::load(content);
+                let save_game = stardew::load(&data);
                 self.upload_task = None;
                 self.content = Some(match save_game {
                     Ok(sg) => format!("{:#?}", sg),
@@ -54,31 +48,28 @@ impl Component for App {
         }
     }
 
-    fn change(&mut self, _props: Self::Properties) -> ShouldRender {
-        false
-    }
+    fn view(&self, ctx: &Context<Self>) -> Html {
+        let on_change = ctx.link().callback(|event: Event| {
+            let target = event.target().expect("event should have target");
+            let files = target
+                .unchecked_into::<HtmlInputElement>()
+                .files()
+                .expect("target should have file list");
+            let file = FileList::from(files)
+                .first()
+                .expect("file list shouldn't be empty")
+                .clone();
 
-    fn view(&self) -> Html {
+            Msg::File(file)
+        });
+
         html! {
             <section class="section">
                 <div class="container">
                     <h1 class="title">{"Figure out what's in your save game file"}</h1>
                     <div class="block file">
                         <label class="file-label">
-                            <input class="file-input" type="file" onchange=self.link.callback(move |value| {
-                                if let ChangeData::Files(files) = value {
-                                    let file = js_sys::try_iter(&files)
-                                        .unwrap()
-                                        .unwrap()
-                                        .map(|v|File::from(v.unwrap()))
-                                        .next()
-                                        .unwrap();
-                                    Msg::File(file)
-                                } else {
-                                    panic!("no files!")
-                                }
-                            })
-                            />
+                            <input class="file-input" type="file" onchange={on_change} />
                             <span class="file-cta">
                                 <span class="file-label">
                                     { "Choose a file to scan" }
