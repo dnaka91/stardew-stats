@@ -631,21 +631,21 @@ struct Quest {
 enum QuestType {
     ItemDeliveryQuest {
         // target_message: String,
-    // target: String,
-    // item: u64,
-    // number: u64,
-    // deliver_item: Option<DeliveryItem>,
-    // parts: Vec<()>,
-    // dialogueparts: Vec<()>,
-    // objective: Option<Objective>,
+        // target: String,
+        // item: u64,
+        // number: u64,
+        // deliver_item: Option<DeliveryItem>,
+        // parts: Vec<()>,
+        // dialogueparts: Vec<()>,
+        // objective: Option<Objective>,
     },
     LostItemQuest {
         // npc_name: String,
-    // location_of_item: String,
-    // item_index: u64,
-    // tile_x: u64,
-    // tile_y: u64,
-    // item_found: bool,
+        // location_of_item: String,
+        // item_index: u64,
+        // tile_x: u64,
+        // tile_y: u64,
+        // item_found: bool,
     },
 }
 
